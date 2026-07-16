@@ -1,0 +1,147 @@
+/* ============ Токены: тёмное сукно стола + бумажные листы ============ */
+:root {
+  --felt: #1f2530;        /* сукно стола */
+  --felt-2: #272e3c;      /* приподнятые панели на сукне */
+  --felt-3: #313a4b;      /* границы/ховеры на тёмном */
+  --paper: #efe7d4;       /* бумажный лист */
+  --paper-2: #e6dcc4;     /* затемнение бумаги */
+  --ink: #2b2519;         /* чернила на бумаге */
+  --ink-soft: #6b6250;    /* вторичные чернила */
+  --gold: #c9a227;        /* старое золото — акцент */
+  --gold-dim: #9a7f22;
+  --red: #a53f2b;         /* опасное */
+  --text: #d7dae1;        /* текст на сукне */
+  --text-dim: #98a0af;
+  --font-display: 'Alegreya', Georgia, serif;
+  --font-body: 'Alegreya Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --radius: 6px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--felt);
+  background-image: radial-gradient(ellipse at 50% -20%, #2c3444 0%, var(--felt) 60%);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.45;
+}
+#app { min-height: 100%; }
+
+h1, h2, h3 { font-family: var(--font-display); font-weight: 700; margin: 0 0 0.5em; }
+a { color: var(--gold); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ============ Панели ============ */
+.panel {
+  background: var(--felt-2);
+  border: 1px solid var(--felt-3);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+/* Бумажный лист — сигнатурный элемент */
+.paper {
+  background: var(--paper);
+  background-image: linear-gradient(160deg, rgba(255,255,255,0.5) 0%, transparent 30%),
+    linear-gradient(0deg, var(--paper-2) 0%, var(--paper) 12%);
+  color: var(--ink);
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.45), 0 8px 24px rgba(0,0,0,0.35);
+  padding: 20px 22px;
+}
+.paper h1, .paper h2, .paper h3 { color: var(--ink); }
+.paper a { color: var(--gold-dim); }
+
+/* Золотая линейка раздела на бумаге */
+.rule {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--font-display); font-weight: 800;
+  font-size: 0.8rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--gold-dim);
+  margin: 18px 0 8px;
+}
+.rule::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--gold-dim), transparent); }
+.rule:first-child { margin-top: 0; }
+
+/* Недоступный по уровню элемент в итоговой панели:
+   бледно-серый и не кликабельный */
+.locked {
+  color: #b3ab99 !important;
+  pointer-events: none;
+  filter: grayscale(1);
+}
+
+/* ============ Формы ============ */
+label.field { display: block; margin-bottom: 12px; font-weight: 500; }
+label.field > span { display: block; font-size: 0.82rem; color: var(--text-dim); margin-bottom: 4px; letter-spacing: 0.03em; }
+.paper label.field > span { color: var(--ink-soft); }
+
+input, select, textarea {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: #1a1f29;
+  border: 1px solid var(--felt-3);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.paper input, .paper select, .paper textarea {
+  color: var(--ink); background: rgba(255,255,255,0.55); border-color: #cabfa4;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--gold); outline-offset: 1px;
+}
+input[type='number'] { width: 90px; }
+input[type='checkbox'] { width: auto; }
+
+button {
+  font: inherit; font-weight: 700;
+  color: #141414; background: var(--gold);
+  border: none; border-radius: var(--radius);
+  padding: 8px 16px; cursor: pointer;
+}
+button:hover { background: #d9b23a; }
+button:disabled { opacity: 0.45; cursor: default; }
+button.ghost {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--felt-3);
+}
+.paper button.ghost { color: var(--ink); border-color: #cabfa4; }
+button.ghost:hover { border-color: var(--gold); color: var(--gold); }
+button.danger { background: var(--red); color: #fff; }
+button.small { padding: 3px 9px; font-size: 0.82rem; font-weight: 500; }
+
+/* Кнопка info — круглая, рядом с каждым данным */
+button.info {
+  width: 20px; height: 20px; padding: 0;
+  border-radius: 50%; font-size: 0.72rem; font-weight: 800;
+  font-family: var(--font-display); font-style: italic;
+  background: transparent; color: var(--gold-dim);
+  border: 1px solid var(--gold-dim);
+  vertical-align: middle; line-height: 1;
+}
+button.info:hover { background: var(--gold); border-color: var(--gold); color: #141414; }
+
+/* ============ Разное ============ */
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.spread { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.muted { color: var(--text-dim); font-size: 0.88rem; }
+.paper .muted { color: var(--ink-soft); }
+.error { color: #e08573; font-size: 0.9rem; margin: 8px 0; }
+.badge {
+  display: inline-block; font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 10px;
+  background: var(--gold); color: #141414;
+}
+.badge.game { background: #3f6b4f; color: #eaf3ec; }
+.mono { font-family: var(--font-mono); font-size: 0.85rem; }
+
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

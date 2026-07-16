@@ -1,3 +1,7 @@
+*~
+dnd_file_cache/
+community_dnd_file_cache/
+node_modules/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
