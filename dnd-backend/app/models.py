@@ -1,5 +1,5 @@
-# BACKEND-PATCH (v5): замените этим файлом app/models.py.
-# Добавлена модель CommunityObject для подсистемы DnD RFC.
+# BACKEND-PATCH (v7): замените этим файлом app/models.py.
+# Добавлены модели CommunityObject (DnD RFC) и SystemLog (логи Settings).
 
 from datetime import datetime, timezone
 
@@ -157,6 +157,22 @@ class CommunityObject(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     author: Mapped["User"] = relationship()
+
+
+class SystemLog(Base):
+    """Лог внутренних систем (пока — события DnD RFC) для страницы Settings.
+
+    actor_name хранится снимком: лог остаётся читаемым после удаления
+    пользователя (actor_id при этом обнуляется).
+    """
+    __tablename__ = "system_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), default="rfc", index=True)
+    message: Mapped[str] = mapped_column(Text)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    actor_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class DndCache(Base):

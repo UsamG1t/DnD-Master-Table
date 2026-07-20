@@ -1,4 +1,4 @@
-# BACKEND-PATCH (v5): замените этим файлом app/routers/dnd_data.py.
+# BACKEND-PATCH (v6): замените этим файлом app/routers/dnd_data.py.
 # /dnd/categories теперь отдаёт явное описание категорий 2024 и алиасов;
 # заклинания классов идут через fallback-версию API (в 2024 их ещё нет).
 # Добавлен эндпоинт GET /dnd/classes/{index}/spells — список заклинаний,
@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_current_user
-from ..services import dnd_client
+from ..services import cache_builder, dnd_client
 
 router = APIRouter(prefix="/dnd", tags=["dnd"], dependencies=[Depends(get_current_user)])
 
@@ -22,6 +22,25 @@ def categories() -> dict:
         "categories": dnd_client.CATEGORIES,
         "aliases": dnd_client.CATEGORY_ALIASES,
     }
+
+
+@router.post("/cache/rebuild")
+async def rebuild_cache():
+    """Запуск полного обхода внешнего API и пересборки dnd_file_cache.
+
+    Сборка идёт в фоне (сервер продолжает работать), готовый кеш атомарно
+    подменяет старый. Повторный вызов при идущей сборке ничего не запускает.
+    Куда монтировать ручку (права доступа) — решим отдельно; пока доступна
+    любому аутентифицированному пользователю.
+    """
+    started = cache_builder.start_rebuild()
+    return {"started": started, **cache_builder.status()}
+
+
+@router.get("/cache/status")
+def cache_status():
+    """Состояние статического кеша и текущей сборки."""
+    return cache_builder.status()
 
 
 @router.get("/classes/{index}/spells")

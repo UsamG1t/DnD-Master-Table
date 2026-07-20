@@ -1,4 +1,4 @@
-# BACKEND-PATCH (v5): НОВЫЙ файл — скопируйте в app/routers/rfc.py
+# BACKEND-PATCH (v7): скопируйте в app/routers/rfc.py
 # и подключите в app/main.py (см. main.py из патча).
 """DnD RFC: объекты сообщества.
 
@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..database import get_db
 from ..deps import get_current_user
-from ..services import dnd_client
+from ..services import dnd_client, monitor
 
 router = APIRouter(prefix="/rfc", tags=["rfc"])
 
@@ -152,6 +152,10 @@ def create_object(
     db.add(obj)
     db.commit()
     db.refresh(obj)
+    monitor.log_system(
+        db, f"Пользователь {user.username} ждёт ответа по объекту «{obj.name}» ({category})",
+        actor=user,
+    )
     return to_out(obj, user)
 
 
@@ -175,6 +179,10 @@ def update_object(
     obj.review_comment = None
     db.commit()
     db.refresh(obj)
+    monitor.log_system(
+        db, f"Пользователь {user.username} доработал объект «{obj.name}» и ждёт ответа",
+        actor=user,
+    )
     return to_out(obj, user)
 
 
@@ -190,8 +198,13 @@ def delete_object(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Удалять может автор или администратор сервера")
     if obj.cache_key:
         dnd_client.remove_community_cache(obj.cache_key)
+    name, author_name = obj.name, obj.author.username
     db.delete(obj)
     db.commit()
+    if author_name == user.username:
+        monitor.log_system(db, f"Пользователь {user.username} удалил объект «{name}»", actor=user)
+    else:
+        monitor.log_system(db, f"Вы удалили объект «{name}» (автор: {author_name})", actor=user)
 
 
 @router.post("/objects/{obj_id}/accept")
@@ -213,6 +226,9 @@ def accept_object(
     obj.review_comment = None
     db.commit()
     db.refresh(obj)
+    monitor.log_system(
+        db, f"Вы приняли объект «{obj.name}» (автор: {obj.author.username})", actor=user,
+    )
     return to_out(obj, user)
 
 
@@ -233,4 +249,8 @@ def reject_object(
     obj.review_comment = body.comment or None
     db.commit()
     db.refresh(obj)
+    monitor.log_system(
+        db, f"Вы отправили на доработку объект «{obj.name}» (автор: {obj.author.username})",
+        actor=user,
+    )
     return to_out(obj, user)
