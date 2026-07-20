@@ -17,6 +17,7 @@ export default defineConfig({
       '/characters': BACKEND,
       '/games': { target: BACKEND, ws: true },
       '/rfc': BACKEND,
+      '/settings': BACKEND,
       '/health': BACKEND,
     },
   },

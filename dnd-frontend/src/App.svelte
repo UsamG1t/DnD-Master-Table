@@ -7,6 +7,7 @@
   import Games from './pages/Games.svelte';
   import GameRoom from './pages/GameRoom.svelte';
   import Rfc from './pages/Rfc.svelte';
+  import Settings from './pages/Settings.svelte';
 
   const route = $derived(parse(router.path));
 
@@ -26,6 +27,9 @@
       <a href="#/characters" class:active={route.page === 'characters' || route.page === 'editor'}>Персонажи</a>
       <a href="#/games" class:active={route.page === 'games' || route.page === 'game'}>Игры</a>
       <a href="#/rfc" class:active={route.page === 'rfc'}>DnD RFC</a>
+      {#if auth.isServerAdmin}
+        <a href="#/settings" class:active={route.page === 'settings'}>Settings</a>
+      {/if}
     </div>
     <div class="row">
       {#if auth.user}
@@ -52,6 +56,8 @@
       {/key}
     {:else if route.page === 'rfc'}
       <Rfc />
+    {:else if route.page === 'settings'}
+      <Settings />
     {/if}
   </main>
 {/if}
