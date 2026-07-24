@@ -1,5 +1,7 @@
 # Продакшен: образы тянутся из GHCR (собираются в CI). Запускается деплоем.
 name: dnd-master-table
+# Стек не публикует порты: наружу его отдаёт общий edge-прокси (/opt/edge),
+# который терминирует TLS и проксирует dnd.mastertable.space на dnd-web.
 # Persistent-данные (кеши, БД пользователей) живут в /etc/DnD-Master-Table
 # и НЕ затрагиваются переразвёртыванием.
 services:
@@ -25,26 +27,18 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
-    ports:
-      - "80:80"
-      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - certbot-www:/var/www/certbot:ro
-      - certbot-conf:/etc/letsencrypt:ro
+    networks:
+      default:      # общение с backend
+      edge:         # приём трафика от edge-прокси
+        aliases:
+          - dnd-web
 
-  certbot:
-    image: certbot/certbot
-    restart: unless-stopped
-    volumes:
-      - certbot-www:/var/www/certbot
-      - certbot-conf:/etc/letsencrypt
-    # Автопродление: каждые 12ч пытается обновить сертификаты
-    entrypoint: >
-      /bin/sh -c 'trap exit TERM;
-      while :; do certbot renew --webroot -w /var/www/certbot --quiet;
-      sleep 12h & wait $${!}; done'
+networks:
+  edge:
+    external: true
 
 volumes:
   # Хостовый bind на /etc/DnD-Master-Table — переживает передеплой
@@ -54,5 +48,3 @@ volumes:
       type: none
       o: bind
       device: /etc/DnD-Master-Table
-  certbot-www:
-  certbot-conf:

@@ -130,10 +130,12 @@ jobs:
               chmod 600 .env
             fi
 
-            # Актуализируем конфиг сайта под домен из секретов
-            export DOMAIN="${{ secrets.DOMAIN }}"
+            # Внутренний конфиг nginx (HTTP-only): TLS и домены — на edge-прокси
             mkdir -p nginx/conf.d
-            envsubst '${DOMAIN}' < nginx/site.conf.template > nginx/conf.d/site.conf
+            cp nginx/site.conf nginx/conf.d/site.conf
+
+            # Общая сеть с edge-прокси (создаётся один раз, здесь — идемпотентно)
+            docker network create edge 2>/dev/null || true
 
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose -f docker-compose.prod.yml pull
