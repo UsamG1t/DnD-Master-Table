@@ -64,6 +64,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # GITHUB_REPOSITORY недоступен в SSH-сессии на сервере, поэтому имена
+      # образов вычисляем здесь и подставляем в скрипт деплоя.
+      - name: Compute image names
+        id: names
+        run: |
+          repo="${GITHUB_REPOSITORY,,}"
+          echo "backend=ghcr.io/${repo}/backend:latest" >> "$GITHUB_OUTPUT"
+          echo "web=ghcr.io/${repo}/web:latest" >> "$GITHUB_OUTPUT"
+
       # Каталог приложения должен принадлежать пользователю деплоя,
       # иначе scp не сможет перезаписать файлы (Permission denied).
       - name: Prepare app dir on server
@@ -76,7 +85,7 @@ jobs:
           script: |
             set -e
             sudo mkdir -p /opt/dnd-master-table/nginx/conf.d
-            sudo chown -R "$USER":"$USER" /opt/dnd-master-table
+            sudo chown -R "$(id -un)":"$(id -gn)" /opt/dnd-master-table
 
       # Копируем на сервер только то, что нужно в рантайме:
       # prod-compose, nginx-конфиги и шаблон, скрипты.
@@ -98,16 +107,14 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          envs: DOMAIN
           script: |
             set -e
             APP_DIR=/opt/dnd-master-table
             DATA_DIR=/etc/DnD-Master-Table
             cd "$APP_DIR"
 
-            repo="${GITHUB_REPOSITORY,,}"
-            export BACKEND_IMAGE="ghcr.io/${repo}/backend:latest"
-            export WEB_IMAGE="ghcr.io/${repo}/web:latest"
+            export BACKEND_IMAGE="${{ steps.names.outputs.backend }}"
+            export WEB_IMAGE="${{ steps.names.outputs.web }}"
 
             # Persistent-данные обязаны существовать (обычно создаёт server-init.sh)
             sudo mkdir -p "$DATA_DIR/dnd_file_cache" "$DATA_DIR/community_dnd_file_cache"
