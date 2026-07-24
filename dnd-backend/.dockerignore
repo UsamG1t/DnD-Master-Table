@@ -1,0 +1,6 @@
+__pycache__
+*.pyc
+.env
+dnd_app.db
+dnd_file_cache
+community_dnd_file_cache

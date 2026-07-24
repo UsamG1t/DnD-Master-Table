@@ -1,0 +1,116 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute lowercase image names
+        id: names
+        run: |
+          repo="${GITHUB_REPOSITORY,,}"
+          echo "backend=${{ env.REGISTRY }}/${repo}/backend" >> "$GITHUB_OUTPUT"
+          echo "web=${{ env.REGISTRY }}/${repo}/web" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./dnd-backend
+          push: true
+          tags: |
+            ${{ steps.names.outputs.backend }}:latest
+            ${{ steps.names.outputs.backend }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & push web
+        uses: docker/build-push-action@v6
+        with:
+          context: ./dnd-frontend
+          push: true
+          tags: |
+            ${{ steps.names.outputs.web }}:latest
+            ${{ steps.names.outputs.web }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+
+      # Копируем на сервер только то, что нужно в рантайме:
+      # prod-compose, nginx-конфиги и шаблон, скрипты.
+      - name: Copy deploy files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          source: "docker-compose.prod.yml,nginx/*,scripts/*"
+          target: /opt/dnd-master-table
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          envs: DOMAIN
+          script: |
+            set -e
+            APP_DIR=/opt/dnd-master-table
+            DATA_DIR=/etc/DnD-Master-Table
+            cd "$APP_DIR"
+
+            repo="${GITHUB_REPOSITORY,,}"
+            export BACKEND_IMAGE="ghcr.io/${repo}/backend:latest"
+            export WEB_IMAGE="ghcr.io/${repo}/web:latest"
+
+            # Persistent-данные обязаны существовать (обычно создаёт server-init.sh)
+            sudo mkdir -p "$DATA_DIR/dnd_file_cache" "$DATA_DIR/community_dnd_file_cache"
+            sudo chmod -R 777 "$DATA_DIR"
+
+            # .env НЕ перезаписываем; если его нет — генерируем секреты здесь
+            if [ ! -f .env ]; then
+              echo "SECRET_KEY=$(openssl rand -hex 32)" > .env
+              echo "ADMIN_REGISTRATION_TOKEN=$(openssl rand -hex 24)" >> .env
+              echo "ACCESS_TOKEN_EXPIRE_MINUTES=1440" >> .env
+              echo "DND_API_BASE=https://www.dnd5eapi.co" >> .env
+              echo "DND_CACHE_TTL=604800" >> .env
+              chmod 600 .env
+            fi
+
+            # Актуализируем конфиг сайта под домен из секретов
+            export DOMAIN="${{ secrets.DOMAIN }}"
+            mkdir -p nginx/conf.d
+            envsubst '${DOMAIN}' < nginx/site.conf.template > nginx/conf.d/site.conf
+
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            docker image prune -af --filter "until=168h"
+            docker compose -f docker-compose.prod.yml ps

@@ -1,0 +1,58 @@
+# Продакшен: образы тянутся из GHCR (собираются в CI). Запускается деплоем.
+name: dnd-master-table
+# Persistent-данные (кеши, БД пользователей) живут в /etc/DnD-Master-Table
+# и НЕ затрагиваются переразвёртыванием.
+services:
+  backend:
+    image: ${BACKEND_IMAGE}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Пути к кешам и БД внутри контейнера указывают на смонтированный том.
+      # Именно эти переменные читает код (os.getenv / pydantic Settings).
+      DATABASE_URL: "sqlite:////data/dnd_app.db"
+      DND_FILE_CACHE_DIR: "/data/dnd_file_cache"
+      DND_COMMUNITY_CACHE_DIR: "/data/community_dnd_file_cache"
+      DND_FILE_CACHE_URL_BASE: "https://www.dnd5eapi.co"
+    volumes:
+      - dnd-data:/data
+    expose:
+      - "8000"
+
+  web:
+    image: ${WEB_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot-www:/var/www/certbot:ro
+      - certbot-conf:/etc/letsencrypt:ro
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    volumes:
+      - certbot-www:/var/www/certbot
+      - certbot-conf:/etc/letsencrypt
+    # Автопродление: каждые 12ч пытается обновить сертификаты
+    entrypoint: >
+      /bin/sh -c 'trap exit TERM;
+      while :; do certbot renew --webroot -w /var/www/certbot --quiet;
+      sleep 12h & wait $${!}; done'
+
+volumes:
+  # Хостовый bind на /etc/DnD-Master-Table — переживает передеплой
+  dnd-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /etc/DnD-Master-Table
+  certbot-www:
+  certbot-conf:
