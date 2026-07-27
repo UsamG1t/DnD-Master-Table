@@ -4,6 +4,8 @@
   // сервера не примет его (тогда он попадает в community-кеш и в списки
   // редактора) или не отклонит с возможностью доработки.
   import { api } from '../lib/api.js';
+  import Modal from '../components/Modal.svelte';
+  import DataTree from '../components/DataTree.svelte';
 
   let categories = $state({});   // {index: описание} из backend
   let objects = $state([]);
@@ -18,6 +20,9 @@
   let fieldValues = $state({});
   let extraJson = $state('');
   let formError = $state('');
+
+  // Просмотр карточки
+  let viewing = $state(null);
 
   /* Поля описания по категориям (типы: text | number | textarea | csv).
      Для категорий без шаблона — базовые name+description + JSON. */
@@ -172,6 +177,7 @@
   }
 
   function startEdit(obj) {
+    viewing = null;
     editingId = obj.id;
     category = obj.category;
     objName = obj.name;
@@ -191,6 +197,7 @@
     if (!confirm(`Удалить объект «${obj.name}»?`)) return;
     try {
       await api(`/rfc/objects/${obj.id}`, { method: 'DELETE' });
+      if (viewing?.id === obj.id) viewing = null;
       await load();
     } catch (e) {
       alert(e.message);
@@ -200,6 +207,7 @@
   async function accept(obj) {
     try {
       await api(`/rfc/objects/${obj.id}/accept`, { method: 'POST' });
+      if (viewing?.id === obj.id) viewing = null;
       await load();
     } catch (e) {
       alert(e.message);
@@ -210,10 +218,21 @@
     const comment = prompt('Комментарий автору (что доработать):', '') ?? '';
     try {
       await api(`/rfc/objects/${obj.id}/reject`, { method: 'POST', body: { comment } });
+      if (viewing?.id === obj.id) viewing = null;
       await load();
     } catch (e) {
       alert(e.message);
     }
+  }
+
+  // Поля объекта для просмотра: подписи из шаблона категории, затем прочее
+  function viewRows(obj) {
+    const tmpl = FIELD_TEMPLATES[obj.category] ?? GENERIC_TEMPLATE;
+    const labels = Object.fromEntries(tmpl.map(([k, label]) => [k, label]));
+    const order = tmpl.map(([k]) => k);
+    const data = obj.data ?? {};
+    const keys = [...order.filter((k) => k in data), ...Object.keys(data).filter((k) => !order.includes(k))];
+    return keys.map((k) => [labels[k] ?? k, data[k]]);
   }
 </script>
 
@@ -303,6 +322,7 @@
           <p class="desc">{String(obj.data.description).slice(0, 200)}{String(obj.data.description).length > 200 ? '…' : ''}</p>
         {/if}
         <div class="row">
+          <button class="ghost small" onclick={() => (viewing = obj)}>Открыть</button>
           {#if obj.is_mine && obj.status !== 'accepted'}
             <button class="small" onclick={() => startEdit(obj)}>
               {obj.status === 'rejected' ? 'Доработать' : 'Редактировать'}
@@ -321,6 +341,51 @@
   </div>
 </div>
 
+<!-- ============ Просмотр карточки ============ -->
+{#if viewing}
+  <Modal title={viewing.name} onclose={() => (viewing = null)}>
+    <p class="muted view-meta">
+      {viewing.category} · автор {viewing.author_name} ·
+      <span class="status {STATUS_CLASS[viewing.status]}">{viewing.status_label}</span>
+    </p>
+    {#if viewing.review_comment}
+      <p class="review">Комментарий администратора: {viewing.review_comment}</p>
+    {/if}
+
+    <table class="view-table">
+      <tbody>
+        {#each viewRows(viewing) as [label, value]}
+          <tr>
+            <td class="key">{label}</td>
+            <td>
+              {#if value !== null && typeof value === 'object'}
+                <DataTree data={value} />
+              {:else}
+                <span class="val">{String(value)}</span>
+              {/if}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+
+    <div class="row view-actions">
+      {#if viewing.is_mine && viewing.status !== 'accepted'}
+        <button onclick={() => startEdit(viewing)}>
+          {viewing.status === 'rejected' ? 'Доработать' : 'Редактировать'}
+        </button>
+      {/if}
+      {#if canReview && viewing.status === 'pending'}
+        <button onclick={() => accept(viewing)}>Принять</button>
+        <button class="ghost" onclick={() => reject(viewing)}>Отклонить</button>
+      {/if}
+      {#if viewing.is_mine || canReview}
+        <button class="danger" onclick={() => remove(viewing)}>Удалить</button>
+      {/if}
+    </div>
+  </Modal>
+{/if}
+
 <style>
   .head { margin-bottom: 4px; }
   .layout { display: grid; grid-template-columns: minmax(300px, 460px) minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 12px; }
@@ -336,4 +401,11 @@
   .status.pending { background: #4a4632; color: #e6d9a8; }
   .status.accepted { background: #3f6b4f; color: #eaf3ec; }
   .status.rejected { background: #6b3f3f; color: #f3eaea; }
+
+  .view-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .view-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+  .view-table td { padding: 4px 8px 4px 0; vertical-align: top; border-bottom: 1px solid rgba(0,0,0,0.08); }
+  .view-table td.key { color: var(--ink-soft); white-space: nowrap; width: 1%; padding-right: 16px; }
+  .view-table .val { white-space: pre-wrap; }
+  .view-actions { margin-top: 14px; }
 </style>
