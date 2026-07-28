@@ -186,3 +186,49 @@ def test_schema_public_shape():
     classes = next(f for f in pub["fields"] if f["key"] == "classes")
     assert classes["ref_category"] == "classes"
     assert any(f["key"] == "level" for f in pub["fields"])
+
+
+# ---------- Совместимость при приёме ----------
+
+def test_compat_duplicate_srd(srd):
+    srd.add("species/dwarf")
+    iss = run(rfc_schema.check_compatibility(
+        FakeDB(), "species", "dwarf",
+        {"size": "Medium", "speed": 30, "description": "x"}, self_id=99))
+    assert any(i.kind == "duplicate" for i in iss)
+
+
+def test_compat_duplicate_community(srd):
+    db = FakeDB([comm("traits", "stone", "Камень", "accepted")])
+    db.rows[0].id = 5
+    iss = run(rfc_schema.check_compatibility(db, "traits", "stone", {"description": "x"}, self_id=99))
+    assert any(i.kind == "duplicate" for i in iss)
+
+
+def test_compat_self_not_duplicate(srd):
+    db = FakeDB([comm("traits", "stone", "Камень", "accepted")])
+    db.rows[0].id = 7
+    iss = run(rfc_schema.check_compatibility(db, "traits", "stone", {"description": "x"}, self_id=7))
+    assert not any(i.kind == "duplicate" for i in iss)
+
+
+def test_compat_unknown_school(srd):
+    srd.add("classes/wizard")
+    iss = run(rfc_schema.check_compatibility(
+        FakeDB(), "spells", "chaos-bolt",
+        {"level": 1, "school": "chaos", "classes": ["wizard"], "description": "x"}, self_id=1))
+    assert any(i.kind == "unknown_value" and i.field == "school" for i in iss)
+
+
+def test_compat_valid_spell(srd):
+    srd.add("classes/wizard")
+    iss = run(rfc_schema.check_compatibility(
+        FakeDB(), "spells", "new-bolt",
+        {"level": 1, "school": "evocation", "classes": ["wizard"], "description": "x"}, self_id=1))
+    assert iss == []
+
+
+def test_compat_missing_parent(srd):
+    iss = run(rfc_schema.check_compatibility(
+        FakeDB(), "subspecies", "hill", {"species": "nonexist", "description": "x"}, self_id=1))
+    assert any(i.kind == "parent_type" for i in iss)

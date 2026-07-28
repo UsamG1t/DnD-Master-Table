@@ -193,6 +193,34 @@ def main():
     check("build_payload community name resolved", payload["classes"][1]["name"] == "Мой маг")
     check("build_payload service fields", payload["community"] is True and payload["index"] == "fb")
 
+    # --- совместимость при приёме ---
+    set_srd({"species/dwarf"})
+    iss = run(S.check_compatibility(FakeDB(), "species", "dwarf",
+        {"size": "Medium", "speed": 30, "description": "x"}, self_id=99))
+    check("compat: дубликат index с SRD", any(i.kind == "duplicate" for i in iss))
+
+    set_srd(set())
+    db = FakeDB([comm(id=5, category="traits", index="stone", name="Камень", status="accepted")])
+    iss = run(S.check_compatibility(db, "traits", "stone", {"description": "x"}, self_id=99))
+    check("compat: дубликат с принятым community", any(i.kind == "duplicate" for i in iss))
+
+    set_srd({"classes/wizard"})
+    iss = run(S.check_compatibility(FakeDB(), "spells", "chaos-bolt",
+        {"level": 1, "school": "chaos", "classes": ["wizard"], "description": "x"}, self_id=1))
+    check("compat: неизвестная школа -> unknown_value",
+          any(i.kind == "unknown_value" and i.field == "school" for i in iss))
+
+    set_srd({"classes/wizard"})
+    iss = run(S.check_compatibility(FakeDB(), "spells", "new-bolt",
+        {"level": 1, "school": "evocation", "classes": ["wizard"], "description": "x"}, self_id=1))
+    check("compat: валидное заклинание -> нет проблем", iss == [])
+
+    set_srd(set())
+    iss = run(S.check_compatibility(FakeDB(), "subspecies", "hill",
+        {"species": "nonexist", "description": "x"}, self_id=1))
+    check("compat: отсутствующий родитель -> parent_type",
+          any(i.kind == "parent_type" for i in iss))
+
     passed = sum(1 for _, ok in RESULTS if ok)
     print(f"\n{passed}/{len(RESULTS)} проверок прошло")
     return passed == len(RESULTS)

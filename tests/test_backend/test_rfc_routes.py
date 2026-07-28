@@ -270,3 +270,33 @@ def test_accepted_object_not_editable(client, author, admin, srd):
     r = client.put(f"/rfc/objects/{obj['id']}", headers=author, json={
         "category": "traits", "name": "Финал", "data": {"description": "z"}})
     assert r.status_code == 409
+
+
+# ---------- Совместимость при приёме (задача 3) ----------
+
+def test_accept_rejects_duplicate_of_srd(client, author, admin, srd):
+    # в SRD уже есть species/dwarf -> одноимённый объект принять нельзя
+    srd.add("species/dwarf")
+    obj = create(client, author, "species", "Dwarf",
+                 {"size": "Medium", "speed": 30, "description": "коренастый"})
+    # объект без ссылок -> pending
+    assert obj["status"] == "pending"
+    r = client.post(f"/rfc/objects/{obj['id']}/accept", headers=admin)
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert "issues" in detail
+    assert any(i["kind"] == "duplicate" for i in detail["issues"])
+
+
+
+def test_accept_ok_when_compatible(client, author, admin, srd):
+    # существующий класс, валидная школа, уникальный index -> приём проходит
+    srd.add("classes/wizard")
+    obj = create(client, author, "spells", "Новая молния",
+                 {"level": 1, "school": "evocation", "casting_time": "1 action",
+                  "range": "60", "components": ["V", "S"], "duration": "мгн",
+                  "classes": ["wizard"], "description": "бьёт током"})
+    assert obj["status"] == "pending"
+    r = client.post(f"/rfc/objects/{obj['id']}/accept", headers=admin)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "accepted"
