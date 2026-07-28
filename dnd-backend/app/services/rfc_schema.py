@@ -355,3 +355,138 @@ def status_from_refs(ref_statuses: list[RefStatus]) -> str:
     if any(r.state != "ok" for r in ref_statuses):
         return "draft"
     return "pending"
+
+
+# ---------------- Проверка совместимости при приёме ----------------
+#
+# Отдельно от резолва ссылок: проверяет, что принимаемый объект не
+# конфликтует с уже существующими объектами того же типа и что его
+# enum-значения согласованы с ЖИВОЙ базой (а не только со статическим
+# списком схемы — база могла пополниться community-типами).
+
+# Какие поля сверяются с живыми списками базы: поле -> категория-справочник.
+# Значение поля должно существовать как index в этой категории.
+LIVE_ENUM_FIELDS: dict[str, dict[str, str]] = {
+    "spells": {"school": "magic-schools"},
+    "skills": {"ability": "ability-scores"},
+    "classes": {"primary_ability": "ability-scores",
+                "spellcasting_ability": "ability-scores"},
+}
+# Поля-списки характеристик, каждый элемент — index в ability-scores
+LIVE_ENUM_LIST_FIELDS: dict[str, dict[str, str]] = {
+    "classes": {"saving_throws": "ability-scores"},
+    "backgrounds": {"ability_scores": "ability-scores"},
+}
+
+
+@dataclass
+class CompatIssue:
+    kind: str      # duplicate | unknown_value | parent_type
+    field: str
+    detail: str
+
+
+async def _exists_in_base(db: Session, category: str, index: str) -> bool:
+    category = dnd_client.resolve_category(category)
+    try:
+        await dnd_client.fetch_first(db, f"{category}/{index}")
+        return True
+    except Exception:
+        return False
+
+
+async def check_compatibility(
+    db: Session, category: str, index: str, data: dict,
+    self_id: int | None = None,
+) -> list[CompatIssue]:
+    """Проверка совместимости принимаемого объекта с базой.
+
+    Возвращает список проблем (пустой = можно принимать):
+      * duplicate      — index уже занят в SRD или другим принятым объектом;
+      * unknown_value  — enum-значение отсутствует в живой базе-справочнике;
+      * parent_type    — ссылка на родителя ведёт не в ту категорию / отсутствует.
+    Ничего не мутирует.
+    """
+    category = dnd_client.resolve_category(category)
+    issues: list[CompatIssue] = []
+
+    # 1. Дубликат index: другой принятый community-объект той же категории…
+    dup = (
+        db.query(models.CommunityObject)
+        .filter_by(category=category, index=index, status="accepted")
+        .first()
+    )
+    if dup is not None and dup.id != self_id:
+        issues.append(CompatIssue(
+            "duplicate", "index",
+            f"Объект с индексом «{index}» уже принят (id={dup.id})"))
+    else:
+        # …или запись SRD с таким index. Чтобы не считать дубликатом сам
+        # себя (наш community-объект уже мог попасть в кеш при прошлой
+        # попытке), временно это отличаем по отсутствию self в accepted.
+        srd = await _srd_only_exists(db, category, index, self_id)
+        if srd:
+            issues.append(CompatIssue(
+                "duplicate", "index",
+                f"В базе уже есть {category}/{index} — выберите другое имя"))
+
+    # 2. enum-поля сверяем с живой базой
+    for fkey, ref_cat in LIVE_ENUM_FIELDS.get(category, {}).items():
+        val = data.get(fkey)
+        if not val:
+            continue
+        if not await _live_value_ok(db, ref_cat, str(val)):
+            issues.append(CompatIssue(
+                "unknown_value", fkey,
+                f"«{val}» отсутствует в {ref_cat}"))
+
+    for fkey, ref_cat in LIVE_ENUM_LIST_FIELDS.get(category, {}).items():
+        for val in _as_list(data.get(fkey) or []):
+            if not await _live_value_ok(db, ref_cat, str(val)):
+                issues.append(CompatIssue(
+                    "unknown_value", fkey,
+                    f"«{val}» отсутствует в {ref_cat}"))
+
+    # 3. Родительские ссылки ведут в верную категорию
+    schema = SCHEMAS.get(category)
+    if schema is not None:
+        for f in schema.ref_fields():
+            for idx in _ref_indexes(f, data):
+                if not await _exists_in_base(db, f.ref_category, idx):
+                    issues.append(CompatIssue(
+                        "parent_type", f.key,
+                        f"{f.ref_category}/{idx} не найден в базе"))
+
+    return issues
+
+
+async def _srd_only_exists(db: Session, category: str, index: str,
+                           self_id: int | None) -> bool:
+    """Есть ли index в базе НЕ как сам принимаемый объект.
+
+    Наш объект ещё не принят (self не в accepted и не в кеше), поэтому
+    любое попадание fetch_first — это чужая SRD-запись либо чужой принятый
+    объект (последнее уже поймано на шаге 1). Значит достаточно проверить
+    факт наличия в базе.
+    """
+    # Если самого себя уже нет среди accepted (обычный случай при приёме),
+    # наличие в базе означает чужую запись.
+    return await _exists_in_base(db, category, index)
+
+
+# Кеш «живых» индексов справочников в рамках одного вызова приёма не нужен —
+# categories маленькие; но fetch_first сам кеширует, так что дёшево.
+async def _live_value_ok(db: Session, ref_category: str, value: str) -> bool:
+    ref_category = dnd_client.resolve_category(ref_category)
+    # характеристики принимаем в нижнем регистре (str/dex/...)
+    candidates = {value, value.lower(), value.upper()}
+    for cand in candidates:
+        if await _exists_in_base(db, ref_category, cand):
+            return True
+    # ability-scores: fetch_first по индексу может не находиться в частичном
+    # кеше — тогда сверяем со статическим списком характеристик как фолбэк
+    if ref_category == "ability-scores" and value.lower() in ABILITIES:
+        return True
+    if ref_category == "magic-schools" and value.lower() in MAGIC_SCHOOLS:
+        return True
+    return False

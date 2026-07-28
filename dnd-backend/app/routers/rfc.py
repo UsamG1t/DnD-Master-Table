@@ -395,6 +395,22 @@ async def accept_object(
             "broken_refs": _refs_to_dicts(broken),
         })
 
+    # Совместимость с существующими объектами того же типа: дубликат index,
+    # неизвестные enum-значения, тип родителя. Несовместимость -> отказ.
+    issues = await rfc_schema.check_compatibility(
+        db, obj.category, obj.index, obj.data or {}, self_id=obj.id)
+    if issues:
+        detail = ", ".join(f"{i.field}: {i.detail}" for i in issues)
+        monitor.log_system(
+            db, f"Приём объекта «{obj.name}» отклонён — несовместимость: {detail}",
+            actor=user,
+        )
+        raise HTTPException(409, {
+            "message": "Объект несовместим с базой, приём отменён",
+            "issues": [{"kind": i.kind, "field": i.field, "detail": i.detail}
+                       for i in issues],
+        })
+
     path = dnd_client.api_path(f"{obj.category}/{obj.index}")
     payload = await build_payload(db, obj)
     obj.cache_key = dnd_client.write_community_cache(path, payload)
