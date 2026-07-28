@@ -1,109 +1,42 @@
 <script>
-  // DnD RFC: объекты сообщества. Любой пользователь описывает объект любой
-  // категории базы DnD, объект висит «На обработке», пока администратор
-  // сервера не примет его (тогда он попадает в community-кеш и в списки
-  // редактора) или не отклонит с возможностью доработки.
+  // DnD RFC: объекты сообщества. Форма строится динамически по схеме
+  // категории (GET /rfc/schema/{category}): типы полей, enum, ссылки на
+  // другие карточки (ref/ref_list). Объекты со ссылками на непринятые
+  // объекты уходят в статус draft («Не готов к модерации»); автор жмёт
+  // «Проверить и отправить» — сервер резолвит ссылки и переводит в pending.
   import { api } from '../lib/api.js';
+  import { getList } from '../lib/dnd.js';
   import Modal from '../components/Modal.svelte';
   import DataTree from '../components/DataTree.svelte';
 
-  let categories = $state({});   // {index: описание} из backend
+  let categories = $state({});   // {index: описание}
   let objects = $state([]);
   let canReview = $state(false);
   let error = $state('');
   let notice = $state('');
 
   // Форма
-  let editingId = $state(null); // null = создание нового
+  let editingId = $state(null);
   let category = $state('');
+  let schema = $state(null);      // {fields:[...], strict}
   let objName = $state('');
-  let fieldValues = $state({});
+  let fieldValues = $state({});   // key -> значение
   let extraJson = $state('');
   let formError = $state('');
+  let fieldErrors = $state([]);   // ошибки полей с сервера
+  let loadingSchema = $state(false);
+
+  // Опции для ref-полей: category -> [{index, name, community}]
+  let refOptions = $state({});
 
   // Просмотр карточки
   let viewing = $state(null);
+  let viewError = $state('');
+  let schemaCache = $state({});
 
-  /* Поля описания по категориям (типы: text | number | textarea | csv).
-     Для категорий без шаблона — базовые name+description + JSON. */
-  const FIELD_TEMPLATES = {
-    spells: [
-      ['level', 'Круг (0 — заговор)', 'number'],
-      ['school', 'Школа магии', 'text'],
-      ['casting_time', 'Время накладывания', 'text'],
-      ['range', 'Дистанция', 'text'],
-      ['components', 'Компоненты (В, С, М — через запятую)', 'csv'],
-      ['duration', 'Длительность', 'text'],
-      ['classes', 'Классы (через запятую)', 'csv'],
-      ['description', 'Описание', 'textarea'],
-      ['higher_level', 'На больших кругах', 'textarea'],
-    ],
-    classes: [
-      ['hit_die', 'Кость хитов (число, напр. 10)', 'number'],
-      ['primary_ability', 'Основная характеристика', 'text'],
-      ['saving_throws', 'Спасброски (через запятую)', 'csv'],
-      ['proficiencies', 'Владения (через запятую)', 'csv'],
-      ['description', 'Описание', 'textarea'],
-    ],
-    species: [
-      ['type', 'Тип существа (напр. Humanoid)', 'text'],
-      ['size', 'Размер', 'text'],
-      ['speed', 'Скорость', 'number'],
-      ['traits', 'Особенности (через запятую)', 'csv'],
-      ['description', 'Описание', 'textarea'],
-    ],
-    subspecies: [
-      ['species', 'Вид-родитель', 'text'],
-      ['damage_type', 'Тип урона (если есть)', 'text'],
-      ['traits', 'Особенности (через запятую)', 'csv'],
-      ['description', 'Описание', 'textarea'],
-    ],
-    backgrounds: [
-      ['ability_scores', 'Три характеристики (напр. INT, WIS, CHA)', 'csv'],
-      ['origin_feat', 'Черта происхождения', 'text'],
-      ['proficiencies', 'Владения: 2 навыка + инструмент (через запятую)', 'csv'],
-      ['equipment', 'Снаряжение: пакет или золото', 'textarea'],
-      ['description', 'Описание', 'textarea'],
-    ],
-    feats: [
-      ['type', 'Тип: origin / general / fighting-style / epic-boon', 'text'],
-      ['minimum_level', 'Минимальный уровень (пусто, если нет)', 'number'],
-      ['repeatable', 'Можно ли брать повторно (текст условия)', 'text'],
-      ['description', 'Описание', 'textarea'],
-    ],
-    equipment: [
-      ['category', 'Категория снаряжения', 'text'],
-      ['cost', 'Стоимость (напр. 15 gp)', 'text'],
-      ['weight', 'Вес', 'number'],
-      ['damage', 'Урон (напр. 1d8 slashing)', 'text'],
-      ['mastery', 'Свойство мастерства (2024)', 'text'],
-      ['properties', 'Свойства (через запятую)', 'csv'],
-      ['description', 'Описание', 'textarea'],
-    ],
-    'magic-items': [
-      ['category', 'Категория', 'text'],
-      ['rarity', 'Редкость', 'text'],
-      ['description', 'Описание', 'textarea'],
-    ],
-    skills: [
-      ['ability', 'Характеристика (STR/DEX/CON/INT/WIS/CHA)', 'text'],
-      ['description', 'Описание', 'textarea'],
-    ],
-    traits: [
-      ['species', 'Вид (через запятую, если несколько)', 'csv'],
-      ['description', 'Описание', 'textarea'],
-    ],
-    poisons: [
-      ['poison_type', 'Тип (contact / ingested / inhaled / injury)', 'text'],
-      ['price', 'Цена', 'text'],
-      ['description', 'Описание', 'textarea'],
-    ],
+  const STATUS_CLASS = {
+    draft: 'draft', pending: 'pending', accepted: 'accepted', rejected: 'rejected',
   };
-  const GENERIC_TEMPLATE = [['description', 'Описание', 'textarea']];
-
-  const template = $derived(FIELD_TEMPLATES[category] ?? (category ? GENERIC_TEMPLATE : []));
-
-  const STATUS_CLASS = { pending: 'pending', accepted: 'accepted', rejected: 'rejected' };
 
   async function load() {
     try {
@@ -120,28 +53,66 @@
   function resetForm() {
     editingId = null;
     category = '';
+    schema = null;
     objName = '';
     fieldValues = {};
     extraJson = '';
     formError = '';
+    fieldErrors = [];
   }
 
-  function selectCategory(value) {
+  async function loadSchema(cat) {
+    if (!cat) { schema = null; return; }
+    loadingSchema = true;
+    try {
+      schema = await api(`/rfc/schema/${cat}`);
+      const refCats = [...new Set(
+        schema.fields.filter((f) => f.ref_category).map((f) => f.ref_category)
+      )];
+      await Promise.all(refCats.map(async (rc) => {
+        if (!refOptions[rc]) {
+          try { refOptions[rc] = await getList(rc); }
+          catch { refOptions[rc] = []; }
+        }
+      }));
+    } catch (e) {
+      formError = e.message;
+      schema = null;
+    } finally {
+      loadingSchema = false;
+    }
+  }
+
+  async function selectCategory(value) {
     category = value;
     fieldValues = {};
+    fieldErrors = [];
+    await loadSchema(value);
+  }
+
+  function coerce(field, raw) {
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    switch (field.type) {
+      case 'int': return Number(raw);
+      case 'bool': return Boolean(raw);
+      case 'csv':
+      case 'component_set':
+        return Array.isArray(raw) ? raw
+          : String(raw).split(',').map((s) => s.trim()).filter(Boolean);
+      case 'ref_list':
+        return Array.isArray(raw) ? raw.filter(Boolean) : [raw].filter(Boolean);
+      default: return raw;
+    }
   }
 
   function buildData() {
     const data = {};
-    for (const [key, , type] of template) {
-      const raw = fieldValues[key];
-      if (raw === undefined || raw === null || String(raw).trim() === '') continue;
-      if (type === 'number') data[key] = Number(raw);
-      else if (type === 'csv') data[key] = String(raw).split(',').map((s) => s.trim()).filter(Boolean);
-      else data[key] = raw;
+    for (const f of schema?.fields ?? []) {
+      const v = coerce(f, fieldValues[f.key]);
+      if (v !== undefined && !(Array.isArray(v) && v.length === 0)) data[f.key] = v;
     }
     if (extraJson.trim()) {
-      const extra = JSON.parse(extraJson); // ошибки ловим выше
+      const extra = JSON.parse(extraJson);
       if (typeof extra !== 'object' || Array.isArray(extra)) {
         throw new Error('Дополнительные поля должны быть JSON-объектом');
       }
@@ -152,6 +123,7 @@
 
   async function submit() {
     formError = '';
+    fieldErrors = [];
     notice = '';
     let data;
     try {
@@ -162,17 +134,21 @@
     }
     try {
       const body = { category, name: objName, data };
-      if (editingId) {
-        await api(`/rfc/objects/${editingId}`, { method: 'PUT', body });
-        notice = 'Объект обновлён и снова отправлен на обработку';
-      } else {
-        await api('/rfc/objects', { method: 'POST', body });
-        notice = 'Объект отправлен на обработку';
-      }
+      const result = editingId
+        ? await api(`/rfc/objects/${editingId}`, { method: 'PUT', body })
+        : await api('/rfc/objects', { method: 'POST', body });
+      notice = result.status === 'draft'
+        ? 'Сохранено как черновик: есть ссылки на непринятые объекты. Нажмите «Проверить и отправить».'
+        : (editingId ? 'Объект обновлён и отправлен на обработку' : 'Объект отправлен на обработку');
       resetForm();
       await load();
     } catch (e) {
-      formError = e.message;
+      if (e.status === 422 && e.detail && e.detail.field_errors) {
+        fieldErrors = e.detail.field_errors;
+        formError = 'Исправьте ошибки полей';
+      } else {
+        formError = e.message;
+      }
     }
   }
 
@@ -181,16 +157,36 @@
     editingId = obj.id;
     category = obj.category;
     objName = obj.name;
-    const known = new Set((FIELD_TEMPLATES[obj.category] ?? GENERIC_TEMPLATE).map(([k]) => k));
-    const values = {};
-    const extra = {};
-    for (const [key, value] of Object.entries(obj.data ?? {})) {
-      if (known.has(key)) values[key] = Array.isArray(value) ? value.join(', ') : value;
-      else extra[key] = value;
-    }
-    fieldValues = values;
-    extraJson = Object.keys(extra).length ? JSON.stringify(extra, null, 2) : '';
+    fieldErrors = [];
+    formError = '';
+    loadSchema(obj.category).then(() => {
+      const known = new Set((schema?.fields ?? []).map((f) => f.key));
+      const values = {};
+      const extra = {};
+      for (const [k, v] of Object.entries(obj.data ?? {})) {
+        if (!known.has(k)) { extra[k] = v; continue; }
+        const field = schema.fields.find((f) => f.key === k);
+        if (field?.type === 'ref') values[k] = typeof v === 'object' ? v.index : v;
+        else if (field?.type === 'ref_list') {
+          values[k] = (Array.isArray(v) ? v : [v]).map((x) => (typeof x === 'object' ? x.index : x));
+        } else if ((field?.type === 'csv' || field?.type === 'component_set') && Array.isArray(v)) {
+          values[k] = v.join(', ');
+        } else values[k] = v;
+      }
+      fieldValues = values;
+      extraJson = Object.keys(extra).length ? JSON.stringify(extra, null, 2) : '';
+    });
     window.scrollTo({ top: 0 });
+  }
+
+  async function trySubmit(obj) {
+    try {
+      const r = await api(`/rfc/objects/${obj.id}/submit`, { method: 'POST' });
+      notice = r.message;
+      await load();
+    } catch (e) {
+      alert(e.message);
+    }
   }
 
   async function remove(obj) {
@@ -205,12 +201,19 @@
   }
 
   async function accept(obj) {
+    viewError = '';
     try {
       await api(`/rfc/objects/${obj.id}/accept`, { method: 'POST' });
       if (viewing?.id === obj.id) viewing = null;
       await load();
     } catch (e) {
-      alert(e.message);
+      if (e.status === 409 && e.detail && e.detail.broken_refs) {
+        const list = e.detail.broken_refs.map((r) => `${r.field_label}: ${r.index} (${r.state})`).join('; ');
+        viewError = `Ссылки объекта недействительны, приём отменён — ${list}. Объект возвращён в черновики.`;
+        await load();
+      } else {
+        alert(e.message);
+      }
     }
   }
 
@@ -225,14 +228,41 @@
     }
   }
 
-  // Поля объекта для просмотра: подписи из шаблона категории, затем прочее
+  function refLabel(v) {
+    if (v && typeof v === 'object') return v.name ?? v.index;
+    return String(v);
+  }
+
+  function schemaFor(cat) {
+    return schemaCache[cat]?.fields ?? [];
+  }
+  async function ensureSchema(cat) {
+    if (!schemaCache[cat]) {
+      try { schemaCache[cat] = await api(`/rfc/schema/${cat}`); }
+      catch { schemaCache[cat] = { fields: [] }; }
+    }
+  }
+  async function openView(obj) {
+    viewError = '';
+    await ensureSchema(obj.category);
+    viewing = obj;
+  }
+
   function viewRows(obj) {
-    const tmpl = FIELD_TEMPLATES[obj.category] ?? GENERIC_TEMPLATE;
-    const labels = Object.fromEntries(tmpl.map(([k, label]) => [k, label]));
-    const order = tmpl.map(([k]) => k);
+    const sc = schemaFor(obj.category);
+    const labels = {};
+    const order = [];
+    for (const f of sc) { labels[f.key] = f.label; order.push(f.key); }
     const data = obj.data ?? {};
     const keys = [...order.filter((k) => k in data), ...Object.keys(data).filter((k) => !order.includes(k))];
     return keys.map((k) => [labels[k] ?? k, data[k]]);
+  }
+
+  // ошибки конкретного поля: сервер возвращает строки с подписью поля
+  function fieldError(key) {
+    const label = schema?.fields.find((f) => f.key === key)?.label;
+    if (!label) return [];
+    return fieldErrors.filter((e) => e.includes(label));
   }
 </script>
 
@@ -240,13 +270,14 @@
   <h1>DnD RFC — объекты сообщества</h1>
 </div>
 <p class="muted">
-  Опишите свой класс, вид, предмет, заклинание — любую сущность базы DnD.
-  Объект будет «На обработке», пока администратор сервера не примет его:
-  принятые объекты попадают в общую базу и появляются в списках редактора персонажей.
+  Опишите класс, вид, предмет, заклинание — любую сущность базы DnD по её
+  структуре. Объекты со ссылками на ещё не принятые объекты сохраняются как
+  черновик; когда зависимости приняты, нажмите «Проверить и отправить».
+  Принятые администратором объекты попадают в общую базу и доступны в редакторе.
 </p>
 
 {#if error}<p class="error">{error}</p>{/if}
-{#if notice}<p class="muted">{notice}</p>{/if}
+{#if notice}<p class="notice">{notice}</p>{/if}
 
 <div class="layout">
   <!-- ============ Форма ============ -->
@@ -263,37 +294,100 @@
       </select>
     </label>
     {#if category && categories[category]}
-      <p class="muted">{categories[category]}</p>
+      <p class="muted small">{categories[category]}</p>
     {/if}
 
-    {#if category}
+    {#if loadingSchema}
+      <p class="muted">Загрузка схемы…</p>
+    {/if}
+
+    {#if category && schema}
       <label class="field">
         <span>Название</span>
         <input bind:value={objName} placeholder="Например, Клинок тысячи истин" />
       </label>
 
-      {#each template as [key, label, type]}
+      {#each schema.fields as f (f.key)}
         <label class="field">
-          <span>{label}</span>
-          {#if type === 'textarea'}
-            <textarea rows="3" bind:value={fieldValues[key]}></textarea>
-          {:else if type === 'number'}
-            <input type="number" bind:value={fieldValues[key]} />
+          <span>
+            {f.label}{#if f.required}<b class="req">*</b>{/if}
+            {#if f.help}<i class="muted hint">— {f.help}</i>{/if}
+          </span>
+
+          {#if f.type === 'text'}
+            <textarea rows="3" bind:value={fieldValues[f.key]}></textarea>
+          {:else if f.type === 'int'}
+            <input type="number" min={f.min} max={f.max} bind:value={fieldValues[f.key]} />
+          {:else if f.type === 'bool'}
+            <input type="checkbox" bind:checked={fieldValues[f.key]} />
+          {:else if f.type === 'enum'}
+            <select bind:value={fieldValues[f.key]}>
+              <option value="">— не выбрано —</option>
+              {#each f.options as opt}<option value={opt}>{opt}</option>{/each}
+            </select>
+          {:else if f.type === 'component_set'}
+            <div class="checks-inline">
+              {#each f.options as opt}
+                <label class="chk">
+                  <input
+                    type="checkbox"
+                    checked={(fieldValues[f.key] ?? []).includes?.(opt) ?? false}
+                    onchange={(e) => {
+                      const cur = Array.isArray(fieldValues[f.key]) ? [...fieldValues[f.key]] : [];
+                      if (e.target.checked) { if (!cur.includes(opt)) cur.push(opt); }
+                      else { const i = cur.indexOf(opt); if (i >= 0) cur.splice(i, 1); }
+                      fieldValues[f.key] = cur;
+                    }}
+                  />
+                  {opt}
+                </label>
+              {/each}
+            </div>
+          {:else if f.type === 'ref'}
+            <select bind:value={fieldValues[f.key]}>
+              <option value="">— не выбрано —</option>
+              {#each refOptions[f.ref_category] ?? [] as opt}
+                <option value={opt.index}>{opt.name}{opt.community ? ' (RFC)' : ''}</option>
+              {/each}
+            </select>
+          {:else if f.type === 'ref_list'}
+            <div class="ref-list">
+              {#each refOptions[f.ref_category] ?? [] as opt}
+                <label class="chk">
+                  <input
+                    type="checkbox"
+                    checked={(fieldValues[f.key] ?? []).includes?.(opt.index) ?? false}
+                    onchange={(e) => {
+                      const cur = Array.isArray(fieldValues[f.key]) ? [...fieldValues[f.key]] : [];
+                      if (e.target.checked) { if (!cur.includes(opt.index)) cur.push(opt.index); }
+                      else { const i = cur.indexOf(opt.index); if (i >= 0) cur.splice(i, 1); }
+                      fieldValues[f.key] = cur;
+                    }}
+                  />
+                  {opt.name}{opt.community ? ' (RFC)' : ''}
+                </label>
+              {/each}
+              {#if (refOptions[f.ref_category] ?? []).length === 0}
+                <p class="muted small">Нет доступных объектов категории «{f.ref_category}».</p>
+              {/if}
+            </div>
           {:else}
-            <input bind:value={fieldValues[key]} />
+            <input bind:value={fieldValues[f.key]} />
           {/if}
+
+          {#each fieldError(f.key) as err}<span class="field-err">{err}</span>{/each}
         </label>
       {/each}
 
       <label class="field">
         <span>Дополнительные поля API (JSON-объект, необязательно)</span>
-        <textarea rows="3" class="mono" bind:value={extraJson} placeholder={'{"weight": 3}'}></textarea>
+        <textarea rows="3" class="mono" bind:value={extraJson} placeholder={'{"custom": 1}'}></textarea>
       </label>
 
       {#if formError}<p class="error">{formError}</p>{/if}
       <div class="row">
         <button disabled={!objName.trim()} onclick={submit}>
-          {editingId ? 'Отправить доработку' : 'Отправить на обработку'}
+          {editingId ? 'Сохранить' : 'Создать объект'}
         </button>
         {#if editingId}<button class="ghost" onclick={resetForm}>Отмена</button>{/if}
       </div>
@@ -311,7 +405,7 @@
           <b>{obj.name}</b>
           <span class="status {STATUS_CLASS[obj.status]}">{obj.status_label}</span>
         </div>
-        <p class="muted">
+        <p class="muted small">
           {obj.category} · автор {obj.author_name} ·
           {new Date(obj.updated_at).toLocaleDateString('ru-RU')}
         </p>
@@ -319,10 +413,13 @@
           <p class="review">Комментарий администратора: {obj.review_comment}</p>
         {/if}
         {#if obj.data.description}
-          <p class="desc">{String(obj.data.description).slice(0, 200)}{String(obj.data.description).length > 200 ? '…' : ''}</p>
+          <p class="desc">{String(obj.data.description).slice(0, 160)}{String(obj.data.description).length > 160 ? '…' : ''}</p>
         {/if}
         <div class="row">
-          <button class="ghost small" onclick={() => (viewing = obj)}>Открыть</button>
+          <button class="ghost small" onclick={() => openView(obj)}>Открыть</button>
+          {#if obj.is_mine && obj.status === 'draft'}
+            <button class="small" onclick={() => trySubmit(obj)}>Проверить и отправить</button>
+          {/if}
           {#if obj.is_mine && obj.status !== 'accepted'}
             <button class="small" onclick={() => startEdit(obj)}>
               {obj.status === 'rejected' ? 'Доработать' : 'Редактировать'}
@@ -351,6 +448,7 @@
     {#if viewing.review_comment}
       <p class="review">Комментарий администратора: {viewing.review_comment}</p>
     {/if}
+    {#if viewError}<p class="error">{viewError}</p>{/if}
 
     <table class="view-table">
       <tbody>
@@ -358,7 +456,9 @@
           <tr>
             <td class="key">{label}</td>
             <td>
-              {#if value !== null && typeof value === 'object'}
+              {#if Array.isArray(value)}
+                {value.map(refLabel).join(', ')}
+              {:else if value !== null && typeof value === 'object'}
                 <DataTree data={value} />
               {:else}
                 <span class="val">{String(value)}</span>
@@ -370,6 +470,9 @@
     </table>
 
     <div class="row view-actions">
+      {#if viewing.is_mine && viewing.status === 'draft'}
+        <button onclick={() => { const o = viewing; viewing = null; trySubmit(o); }}>Проверить и отправить</button>
+      {/if}
       {#if viewing.is_mine && viewing.status !== 'accepted'}
         <button onclick={() => startEdit(viewing)}>
           {viewing.status === 'rejected' ? 'Доработать' : 'Редактировать'}
@@ -388,16 +491,26 @@
 
 <style>
   .head { margin-bottom: 4px; }
-  .layout { display: grid; grid-template-columns: minmax(300px, 460px) minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 12px; }
+  .small { font-size: 0.85rem; }
+  .layout { display: grid; grid-template-columns: minmax(320px, 480px) minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 12px; }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
   .objects { display: flex; flex-direction: column; gap: 12px; }
   .obj p { margin: 4px 0; }
   .desc { font-size: 0.9rem; }
+  .notice { color: #8fbf9a; }
   .review { color: #e0b273; font-size: 0.9rem; }
+  .req { color: #e08573; margin-left: 2px; }
+  .hint { font-weight: 400; font-size: 0.8rem; }
+  .field-err { color: #e08573; font-size: 0.8rem; margin-top: 2px; }
+  .checks-inline, .ref-list { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .ref-list { flex-direction: column; max-height: 180px; overflow-y: auto; border: 1px solid var(--felt-3); border-radius: var(--radius); padding: 6px 10px; }
+  .chk { display: flex; align-items: center; gap: 5px; font-weight: 400; }
+
   .status {
     font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em;
-    padding: 2px 10px; border-radius: 10px; text-transform: uppercase;
+    padding: 2px 10px; border-radius: 10px; text-transform: uppercase; white-space: nowrap;
   }
+  .status.draft { background: #3a3f4a; color: #cdd4df; }
   .status.pending { background: #4a4632; color: #e6d9a8; }
   .status.accepted { background: #3f6b4f; color: #eaf3ec; }
   .status.rejected { background: #6b3f3f; color: #f3eaea; }

@@ -12,9 +12,10 @@ export function clearToken() {
 }
 
 export class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, detail = null) {
     super(message);
     this.status = status;
+    this.detail = detail; // исходное тело detail (строка или объект)
   }
 }
 
@@ -40,11 +41,15 @@ export async function api(path, { method = 'GET', body, form } = {}) {
   }
   if (!res.ok) {
     let detail = res.statusText;
+    let rawDetail = null;
     try {
       const data = await res.json();
-      if (data.detail) detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+      if (data.detail !== undefined) {
+        rawDetail = data.detail;
+        detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+      }
     } catch { /* тело не JSON */ }
-    throw new ApiError(detail, res.status);
+    throw new ApiError(detail, res.status, rawDetail);
   }
   if (res.status === 204) return null;
   const contentType = res.headers.get('content-type') ?? '';
