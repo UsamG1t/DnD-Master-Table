@@ -51,15 +51,15 @@ def test_schema_unknown_category_not_strict(client, author):
 # ---------- Создание и валидация ----------
 
 def test_create_valid_no_refs_is_pending(client, author, srd):
-    obj = create(client, author, "traits", "Каменная кожа",
-                 {"description": "Сопротивление урону"})
+    obj = create(client, author, "traits", "Stone Skin",
+                 {"description": "damage resistance"})
     assert obj["status"] == "pending"
     assert obj["status_label"] == "На обработке"
 
 
 def test_create_invalid_fields_422(client, author, srd):
     r = client.post("/rfc/objects", headers=author, json={
-        "category": "spells", "name": "Кривое",
+        "category": "spells", "name": "Malformed",
         "data": {"level": 99, "school": "jedi"}})
     assert r.status_code == 422, r.text
     # тело содержит список ошибок полей
@@ -69,10 +69,10 @@ def test_create_invalid_fields_422(client, author, srd):
 
 def test_create_with_pending_ref_becomes_draft(client, author, srd):
     # ссылаемся на ещё не принятую способность -> объект уходит в draft
-    create(client, author, "traits", "Тёмное зрение", {"description": "видит в темноте"})
-    species = create(client, author, "species", "Дворф",
+    trait = create(client, author, "traits", "Darkvision", {"description": "sees in the dark"})
+    species = create(client, author, "species", "Dwarf-Test",
                      {"size": "Medium", "speed": 30,
-                      "traits": ["temnoe-zrenie"], "description": "крепкий народ"})
+                      "traits": [trait["index"]], "description": "sturdy folk"})
     assert species["status"] == "draft"
     assert species["status_label"] == "Не готов к модерации"
     # в отчёте по ссылкам видно pending
@@ -81,7 +81,7 @@ def test_create_with_pending_ref_becomes_draft(client, author, srd):
 
 
 def test_create_with_missing_ref_is_draft(client, author, srd):
-    species = create(client, author, "species", "Эльф",
+    species = create(client, author, "species", "Elf-Test",
                      {"size": "Medium", "speed": 30,
                       "traits": ["nesuschestvuyuschaya"], "description": "x"})
     assert species["status"] == "draft"
@@ -91,10 +91,10 @@ def test_create_with_missing_ref_is_draft(client, author, srd):
 # ---------- submit: проверить и отправить ----------
 
 def test_submit_with_pending_ref_stays_draft(client, author, srd):
-    create(client, author, "traits", "Каменное сердце", {"description": "x"})
-    sp = create(client, author, "species", "Голем",
+    tr = create(client, author, "traits", "Stone Heart", {"description": "x"})
+    sp = create(client, author, "species", "Golem-Test",
                 {"size": "Large", "speed": 25,
-                 "traits": ["kamennoe-serdce"], "description": "x"})
+                 "traits": [tr["index"]], "description": "x"})
     r = client.post(f"/rfc/objects/{sp['id']}/submit", headers=author)
     assert r.status_code == 200, r.text
     body = r.json()
@@ -105,13 +105,13 @@ def test_submit_with_pending_ref_stays_draft(client, author, srd):
 
 def test_submit_success_when_refs_accepted(client, author, admin, srd):
     # 1) автор создаёт способность, 2) админ принимает, 3) вид ссылается и submit
-    trait = create(client, author, "traits", "Ярость", {"description": "боевой раж"})
+    trait = create(client, author, "traits", "Rage", {"description": "battle fury"})
     ra = client.post(f"/rfc/objects/{trait['id']}/accept", headers=admin)
     assert ra.status_code == 200, ra.text
 
-    sp = create(client, author, "species", "Орк",
+    sp = create(client, author, "species", "Orc-Test",
                 {"size": "Medium", "speed": 30,
-                 "traits": ["yarost"], "description": "воинственный народ"})
+                 "traits": [trait["index"]], "description": "warlike folk"})
     # ссылка на принятый объект -> сразу pending уже при создании
     assert sp["status"] == "pending"
 
@@ -124,10 +124,10 @@ def test_submit_success_when_refs_accepted(client, author, admin, srd):
 def test_submit_after_dependency_accepted(client, author, admin, srd):
     # вид создан со ссылкой на pending -> draft; затем зависимость принимают;
     # повторный submit проходит
-    trait = create(client, author, "traits", "Чешуя", {"description": "броня"})
-    sp = create(client, author, "species", "Драконид",
+    trait = create(client, author, "traits", "Scales", {"description": "armor plating"})
+    sp = create(client, author, "species", "Dragonborn-Test",
                 {"size": "Medium", "speed": 30,
-                 "traits": ["cheshuya"], "description": "потомки драконов"})
+                 "traits": [trait["index"]], "description": "dragon descendants"})
     assert sp["status"] == "draft"
 
     client.post(f"/rfc/objects/{trait['id']}/accept", headers=admin)
@@ -137,7 +137,7 @@ def test_submit_after_dependency_accepted(client, author, admin, srd):
 
 
 def test_submit_only_author(client, author, other, srd):
-    sp = create(client, author, "traits", "Личное", {"description": "x"})
+    sp = create(client, author, "traits", "Private", {"description": "x"})
     r = client.post(f"/rfc/objects/{sp['id']}/submit", headers=other)
     assert r.status_code == 403
 
@@ -145,17 +145,17 @@ def test_submit_only_author(client, author, other, srd):
 # ---------- Приём и повторная проверка ссылок ----------
 
 def test_accept_publishes_to_base(client, author, admin, srd):
-    obj = create(client, author, "traits", "Полёт", {"description": "летает"})
+    obj = create(client, author, "traits", "Flight", {"description": "can fly"})
     r = client.post(f"/rfc/objects/{obj['id']}/accept", headers=admin)
     assert r.status_code == 200 and r.json()["status"] == "accepted"
     # принятый объект появляется в списке базы /dnd/traits
     lst = client.get("/dnd/traits", headers=author)
     assert lst.status_code == 200
-    assert any(it["index"] == "polyot" for it in lst.json())
+    assert any(it["index"] == obj["index"] for it in lst.json())
 
 
 def test_accept_draft_forbidden(client, author, admin, srd):
-    sp = create(client, author, "species", "Черновик",
+    sp = create(client, author, "species", "Draft-Obj",
                 {"size": "Medium", "speed": 30,
                  "traits": ["nope"], "description": "x"})
     assert sp["status"] == "draft"
@@ -166,11 +166,11 @@ def test_accept_draft_forbidden(client, author, admin, srd):
 def test_accept_reverts_to_draft_on_broken_ref(client, author, admin, srd):
     # способность принята -> вид ссылается -> pending; способность удаляют ->
     # приём вида должен отклониться и вернуть его в draft
-    trait = create(client, author, "traits", "Регенерация", {"description": "лечится"})
+    trait = create(client, author, "traits", "Regeneration", {"description": "self-heals"})
     client.post(f"/rfc/objects/{trait['id']}/accept", headers=admin)
-    sp = create(client, author, "species", "Тролль",
+    sp = create(client, author, "species", "Troll-Test",
                 {"size": "Large", "speed": 30,
-                 "traits": ["regeneraciya"], "description": "восстанавливается"})
+                 "traits": [trait["index"]], "description": "regenerates"})
     assert sp["status"] == "pending"
 
     # админ удаляет принятую способность (ломая ссылку вида)
@@ -188,7 +188,7 @@ def test_accept_reverts_to_draft_on_broken_ref(client, author, admin, srd):
 
 
 def test_accept_only_admin(client, author, other, srd):
-    obj = create(client, author, "traits", "Только админ", {"description": "x"})
+    obj = create(client, author, "traits", "Admin Only", {"description": "x"})
     r = client.post(f"/rfc/objects/{obj['id']}/accept", headers=other)
     assert r.status_code == 403
 
@@ -197,78 +197,78 @@ def test_accept_only_admin(client, author, other, srd):
 
 def test_draft_hidden_from_admin(client, author, admin, srd):
     # draft виден автору, но НЕ админу
-    create(client, author, "species", "Скрытый",
+    create(client, author, "species", "Hidden",
            {"size": "Medium", "speed": 30, "traits": ["ghost"], "description": "x"})
     mine = get_list(client, author)
-    assert any(o["name"] == "Скрытый" for o in mine["objects"])
+    assert any(o["name"] == "Hidden" for o in mine["objects"])
     admin_view = get_list(client, admin)
-    assert not any(o["name"] == "Скрытый" for o in admin_view["objects"])
+    assert not any(o["name"] == "Hidden" for o in admin_view["objects"])
 
 
 def test_draft_hidden_from_others(client, author, other, srd):
-    create(client, author, "species", "Приватный",
+    create(client, author, "species", "Private-Obj",
            {"size": "Medium", "speed": 30, "traits": ["x"], "description": "x"})
     others_view = get_list(client, other)
-    assert not any(o["name"] == "Приватный" for o in others_view["objects"])
+    assert not any(o["name"] == "Private-Obj" for o in others_view["objects"])
 
 
 def test_accepted_visible_to_all(client, author, other, admin, srd):
-    obj = create(client, author, "traits", "Общая", {"description": "видна всем"})
+    obj = create(client, author, "traits", "Shared", {"description": "visible to all"})
     client.post(f"/rfc/objects/{obj['id']}/accept", headers=admin)
     view = get_list(client, other)
-    assert any(o["name"] == "Общая" for o in view["objects"])
+    assert any(o["name"] == "Shared" for o in view["objects"])
 
 
 # ---------- Правка, удаление, отклонение ----------
 
 def test_edit_recomputes_status(client, author, admin, srd):
     # создаём с битой ссылкой -> draft; правим на валидную (без ссылок) -> pending
-    sp = create(client, author, "species", "Оборотень",
+    sp = create(client, author, "species", "Werewolf",
                 {"size": "Medium", "speed": 30, "traits": ["nope"], "description": "x"})
     assert sp["status"] == "draft"
     r = client.put(f"/rfc/objects/{sp['id']}", headers=author, json={
-        "category": "species", "name": "Оборотень",
-        "data": {"size": "Medium", "speed": 40, "description": "меняет облик"}})
+        "category": "species", "name": "Werewolf",
+        "data": {"size": "Medium", "speed": 40, "description": "shapeshifts"}})
     assert r.status_code == 200 and r.json()["status"] == "pending"
 
 
 def test_reject_then_edit_cycle(client, author, admin, srd):
-    obj = create(client, author, "traits", "Спорное", {"description": "x"})
+    obj = create(client, author, "traits", "Disputed", {"description": "x"})
     rj = client.post(f"/rfc/objects/{obj['id']}/reject", headers=admin,
-                     json={"comment": "уточните описание"})
+                     json={"comment": "clarify the description"})
     assert rj.status_code == 200 and rj.json()["status"] == "rejected"
-    assert rj.json()["review_comment"] == "уточните описание"
+    assert rj.json()["review_comment"] == "clarify the description"
     # автор дорабатывает
     r = client.put(f"/rfc/objects/{obj['id']}", headers=author, json={
-        "category": "traits", "name": "Спорное", "data": {"description": "подробное описание"}})
+        "category": "traits", "name": "Disputed", "data": {"description": "detailed description"}})
     assert r.status_code == 200 and r.json()["status"] == "pending"
     assert r.json()["review_comment"] is None
 
 
 def test_delete_by_author(client, author, srd):
-    obj = create(client, author, "traits", "Удалю сам", {"description": "x"})
+    obj = create(client, author, "traits", "Self Delete", {"description": "x"})
     r = client.delete(f"/rfc/objects/{obj['id']}", headers=author)
     assert r.status_code == 204
 
 
 def test_delete_by_other_forbidden(client, author, other, srd):
-    obj = create(client, author, "traits", "Чужое", {"description": "x"})
+    obj = create(client, author, "traits", "Foreign", {"description": "x"})
     r = client.delete(f"/rfc/objects/{obj['id']}", headers=other)
     assert r.status_code == 403
 
 
 def test_duplicate_name_conflict(client, author, srd):
-    create(client, author, "traits", "Дубликат", {"description": "x"})
+    create(client, author, "traits", "Duplicate", {"description": "x"})
     r = client.post("/rfc/objects", headers=author, json={
-        "category": "traits", "name": "Дубликат", "data": {"description": "y"}})
+        "category": "traits", "name": "Duplicate", "data": {"description": "y"}})
     assert r.status_code == 409
 
 
 def test_accepted_object_not_editable(client, author, admin, srd):
-    obj = create(client, author, "traits", "Финал", {"description": "x"})
+    obj = create(client, author, "traits", "Final", {"description": "x"})
     client.post(f"/rfc/objects/{obj['id']}/accept", headers=admin)
     r = client.put(f"/rfc/objects/{obj['id']}", headers=author, json={
-        "category": "traits", "name": "Финал", "data": {"description": "z"}})
+        "category": "traits", "name": "Final", "data": {"description": "z"}})
     assert r.status_code == 409
 
 
@@ -278,7 +278,7 @@ def test_accept_rejects_duplicate_of_srd(client, author, admin, srd):
     # в SRD уже есть species/dwarf -> одноимённый объект принять нельзя
     srd.add("species/dwarf")
     obj = create(client, author, "species", "Dwarf",
-                 {"size": "Medium", "speed": 30, "description": "коренастый"})
+                 {"size": "Medium", "speed": 30, "description": "stocky"})
     # объект без ссылок -> pending
     assert obj["status"] == "pending"
     r = client.post(f"/rfc/objects/{obj['id']}/accept", headers=admin)
@@ -292,10 +292,10 @@ def test_accept_rejects_duplicate_of_srd(client, author, admin, srd):
 def test_accept_ok_when_compatible(client, author, admin, srd):
     # существующий класс, валидная школа, уникальный index -> приём проходит
     srd.add("classes/wizard")
-    obj = create(client, author, "spells", "Новая молния",
+    obj = create(client, author, "spells", "New Bolt",
                  {"level": 1, "school": "evocation", "casting_time": "1 action",
-                  "range": "60", "components": ["V", "S"], "duration": "мгн",
-                  "classes": ["wizard"], "description": "бьёт током"})
+                  "range": "60", "components": ["V", "S"], "duration": "instant",
+                  "classes": ["wizard"], "description": "deals lightning damage"})
     assert obj["status"] == "pending"
     r = client.post(f"/rfc/objects/{obj['id']}/accept", headers=admin)
     assert r.status_code == 200, r.text

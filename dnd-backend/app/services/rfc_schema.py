@@ -410,7 +410,9 @@ async def check_compatibility(
     category = dnd_client.resolve_category(category)
     issues: list[CompatIssue] = []
 
-    # 1. Дубликат index: другой принятый community-объект той же категории…
+    # 1. Дубликат index. Другой ПРИНЯТЫЙ community-объект той же категории
+    #    с таким index — конфликт. Если это мы сами (переприём) — не конфликт
+    #    и в базу дальше не смотрим (там будет наш же кеш).
     dup = (
         db.query(models.CommunityObject)
         .filter_by(category=category, index=index, status="accepted")
@@ -420,12 +422,10 @@ async def check_compatibility(
         issues.append(CompatIssue(
             "duplicate", "index",
             f"Объект с индексом «{index}» уже принят (id={dup.id})"))
-    else:
-        # …или запись SRD с таким index. Чтобы не считать дубликатом сам
-        # себя (наш community-объект уже мог попасть в кеш при прошлой
-        # попытке), временно это отличаем по отсутствию self в accepted.
-        srd = await _srd_only_exists(db, category, index, self_id)
-        if srd:
+    elif dup is None:
+        # Своего принятого объекта в базе ещё нет: любое попадание в базу —
+        # чужая SRD-запись, значит index занят.
+        if await _exists_in_base(db, category, index):
             issues.append(CompatIssue(
                 "duplicate", "index",
                 f"В базе уже есть {category}/{index} — выберите другое имя"))
@@ -460,18 +460,6 @@ async def check_compatibility(
     return issues
 
 
-async def _srd_only_exists(db: Session, category: str, index: str,
-                           self_id: int | None) -> bool:
-    """Есть ли index в базе НЕ как сам принимаемый объект.
-
-    Наш объект ещё не принят (self не в accepted и не в кеше), поэтому
-    любое попадание fetch_first — это чужая SRD-запись либо чужой принятый
-    объект (последнее уже поймано на шаге 1). Значит достаточно проверить
-    факт наличия в базе.
-    """
-    # Если самого себя уже нет среди accepted (обычный случай при приёме),
-    # наличие в базе означает чужую запись.
-    return await _exists_in_base(db, category, index)
 
 
 # Кеш «живых» индексов справочников в рамках одного вызова приёма не нужен —

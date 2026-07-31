@@ -26,8 +26,8 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("ADMIN_REGISTRATION_TOKEN", "test-admin-token")
 
 # app/ должен быть импортируемым: pytest запускается с PYTHONPATH=dnd-backend
-fastapi = pytest.importorskip("fastapi", reason="fastapi не установлен")
-pytest.importorskip("sqlalchemy", reason="sqlalchemy не установлен")
+fastapi = pytest.importorskip("fastapi", reason="fastapi not installed")
+pytest.importorskip("sqlalchemy", reason="sqlalchemy not installed")
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
@@ -110,7 +110,7 @@ def client(db_session):
 # ---------- Пользователи ----------
 
 def _register_and_login(client, username, password="pass1234", admin_token=None):
-    body = {"username": username, "email": f"{username}@t.test", "password": password}
+    body = {"username": username, "email": f"{username}@example.com", "password": password}
     if admin_token:
         body["admin_token"] = admin_token
     r = client.post("/auth/register", json=body)

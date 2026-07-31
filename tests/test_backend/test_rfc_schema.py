@@ -9,14 +9,14 @@ import asyncio
 
 import pytest
 
-pytest.importorskip("sqlalchemy", reason="sqlalchemy не установлен")
+pytest.importorskip("sqlalchemy", reason="sqlalchemy not installed")
 
 from app.services import rfc_schema  # noqa: E402
 from app.services import dnd_client  # noqa: E402
 from app import models  # noqa: E402
 
 
-run = asyncio.get_event_loop().run_until_complete
+run = asyncio.new_event_loop().run_until_complete
 
 
 # ---------- Фейки для резолва ссылок ----------
@@ -112,7 +112,7 @@ def test_valid_class_passes():
     rfc_schema.validate_fields("classes", {
         "hit_die": "8", "primary_ability": "wis",
         "saving_throws": ["wis", "cha"], "skill_count": 2,
-        "spellcasting_ability": "wis", "description": "Заклинатель"})
+        "spellcasting_ability": "wis", "description": "A spellcaster"})
 
 
 def test_component_set_invalid():
@@ -153,7 +153,7 @@ def test_ref_missing(srd):
 
 
 def test_ref_pending(srd):
-    db = FakeDB([comm("traits", "stone-skin", "Каменная кожа", "pending")])
+    db = FakeDB([comm("traits", "stone-skin", "Stone Skin", "pending")])
     data = {"size": "Medium", "speed": 30, "traits": ["stone-skin"], "description": "x"}
     refs = run(rfc_schema.resolve_references(db, "species", data))
     assert refs[0].state == "pending"
@@ -161,7 +161,7 @@ def test_ref_pending(srd):
 
 
 def test_ref_accepted_community(srd):
-    db = FakeDB([comm("traits", "stone-skin", "Каменная кожа", "accepted")])
+    db = FakeDB([comm("traits", "stone-skin", "Stone Skin", "accepted")])
     data = {"size": "Medium", "speed": 30, "traits": ["stone-skin"], "description": "x"}
     refs = run(rfc_schema.resolve_references(db, "species", data))
     assert refs[0].state == "ok"
@@ -169,7 +169,7 @@ def test_ref_accepted_community(srd):
 
 
 def test_ref_draft_dependency(srd):
-    db = FakeDB([comm("traits", "wip", "Черновик", "draft")])
+    db = FakeDB([comm("traits", "wip", "Draft Trait", "draft")])
     data = {"size": "Small", "speed": 25, "traits": ["wip"], "description": "x"}
     refs = run(rfc_schema.resolve_references(db, "species", data))
     assert refs[0].state == "pending"
@@ -199,14 +199,14 @@ def test_compat_duplicate_srd(srd):
 
 
 def test_compat_duplicate_community(srd):
-    db = FakeDB([comm("traits", "stone", "Камень", "accepted")])
+    db = FakeDB([comm("traits", "stone", "Stone", "accepted")])
     db.rows[0].id = 5
     iss = run(rfc_schema.check_compatibility(db, "traits", "stone", {"description": "x"}, self_id=99))
     assert any(i.kind == "duplicate" for i in iss)
 
 
 def test_compat_self_not_duplicate(srd):
-    db = FakeDB([comm("traits", "stone", "Камень", "accepted")])
+    db = FakeDB([comm("traits", "stone", "Stone", "accepted")])
     db.rows[0].id = 7
     iss = run(rfc_schema.check_compatibility(db, "traits", "stone", {"description": "x"}, self_id=7))
     assert not any(i.kind == "duplicate" for i in iss)

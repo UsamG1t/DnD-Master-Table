@@ -10,14 +10,14 @@ import types
 
 import pytest
 
-pytest.importorskip("sqlalchemy", reason="sqlalchemy не установлен")
+pytest.importorskip("sqlalchemy", reason="sqlalchemy not installed")
 
 from app import models  # noqa: E402
 from app.routers import rfc  # noqa: E402
 from app.services import dnd_client  # noqa: E402
 
 
-run = asyncio.get_event_loop().run_until_complete
+run = asyncio.new_event_loop().run_until_complete
 
 
 def test_build_payload_refs_to_apiref(db_session, monkeypatch):
@@ -44,7 +44,7 @@ def test_build_payload_refs_to_apiref(db_session, monkeypatch):
     # принятый community-класс
     mage = models.CommunityObject(
         author_id=user.id, category="classes", index="my-mage",
-        name="Мой маг", data={}, status="accepted")
+        name="My Mage", data={}, status="accepted")
     db.add(mage)
     db.commit()
 
@@ -65,7 +65,7 @@ def test_build_payload_refs_to_apiref(db_session, monkeypatch):
     assert isinstance(payload["classes"], list)
     assert payload["classes"][0] == {
         "index": "wizard", "name": "Wizard", "url": "/api/2024/classes/wizard"}
-    assert payload["classes"][1]["name"] == "Мой маг"
+    assert payload["classes"][1]["name"] == "My Mage"
     # служебные поля
     assert payload["index"] == "firebolt-plus"
     assert payload["community"] is True
@@ -73,7 +73,7 @@ def test_build_payload_refs_to_apiref(db_session, monkeypatch):
 
     # совместимость с compact: _names(classes) даёт имена
     names = [c["name"] for c in payload["classes"]]
-    assert names == ["Wizard", "Мой маг"]
+    assert names == ["Wizard", "My Mage"]
 
     db.close()
 
